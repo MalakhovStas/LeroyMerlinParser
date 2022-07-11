@@ -198,6 +198,19 @@ class MiscUtils:
             print(f'{Fore.RED}Ошибка ввода, нужно ввести - y или - n', Fore.RESET)
         return stage
 
+    @classmethod
+    def restart_parse_page(cls, page: int, end_url: str) -> Tuple[str, int] | Tuple[None, int]:
+        cls.get_signal()
+        while True:
+            time.sleep(0.5)
+            rst = input(f'\n{Fore.YELLOW}Перезапустить парсинг со страницы: {Fore.GREEN}{page}{Fore.RESET} - y / n ').lower()
+            if rst == 'y':
+                return end_url, page - 1
+            elif rst == 'n':
+                return None, page
+            time.sleep(0.5)
+            print(f'{Fore.RED}Ошибка ввода, нужно ввести - y или - n', Fore.RESET)
+
 
 class Utils:
 
@@ -421,7 +434,7 @@ class Parser:
                 for defkey, url_link in catalog.items():
                     key = defkey.split("=")[0]
                     logger.info(f'Парсинг раздела: {key}')
-                    num_page = 0
+                    fact_page, num_page = 0, 0
                     pages[key] = {}
 
                     while url_link:
@@ -436,7 +449,7 @@ class Parser:
                         # Дополнительная проверка
                         if fact_page < num_page:
                             url_link = None
-                            logger.warning(f'Парсинг раздела: {key} успешно завершён')
+                            logger.warning(f'Парсинг раздела: {key} успешно завершён Тута')
                             continue
                         # По идее срабатывать не должна
 
@@ -459,8 +472,8 @@ class Parser:
                         if not next_page is None:
                             logger.debug(f'{next_page[0]}, ссылка: {next_page[1]}')
                         else:
-                            url_link = None
-                            logger.info(f'Парсинг раздела: {key} завершён успешно')
+                            logger.info(f'Парсинг раздела: {key} завершён успешно, последняя страница: {fact_page}')
+                            url_link, num_page = MiscUtils.restart_parse_page(fact_page, url_link)
 
                     logger.info(f'Проверено страниц: {fact_page}, кол-во товаров: {len(pages[key])}')
 
@@ -473,7 +486,7 @@ class Parser:
         except Exception as exc:
             logger.error(f'Критическая ошибка: {exc}')
             logger.warning(f'Парсинг раздела {key} завершён не полностью, '
-                           f'проверено страниц: {fact_page}'
+                           f'проверено страниц: {fact_page} '
                            f'кол-во товаров: {len(pages[key])}')
 
             SaveData.save_data(pages, ConfigData.csv_file)
