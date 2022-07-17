@@ -307,11 +307,25 @@ class Utils:
     def get_min_stock() -> int:
         stc = 'start'
         while isinstance(stc, str):
+            if stc == 'restart':
+                print(f'{Fore.RED}Значение должно быть целым числом!{Fore.RESET}')
             stc = input(f"\n{Fore.YELLOW}Введите минимальное количество остатков товара для выгрузки:"
                         f"{Fore.RESET} ").strip()
             stc = int(stc) if stc.isdigit() else 'restart'
 
         return stc
+
+    @staticmethod
+    def get_min_price() -> int:
+        min_price = 'start'
+        while isinstance(min_price, str):
+            if min_price == 'restart':
+                print(f'{Fore.RED}Значение должно быть целым числом!{Fore.RESET}')
+            min_price = input(f"\n{Fore.YELLOW}Введите минимальную цену товара для выгрузки:"
+                              f"{Fore.RESET} ").strip()
+            min_price = int(min_price) if min_price.isdigit() else 'restart'
+
+        return min_price
 
     @staticmethod
     def get_stock(product_id: str, step=1, num=[0]) -> int | float:
@@ -424,6 +438,9 @@ class Parser:
         SaveData.start_file_save(ConfigData.csv_file)
         time.sleep(0.5)
         stc = Utils.get_min_stock()
+
+        minimum_price = Utils.get_min_price()
+
         html = Utils.get_html(ConfigData.URL_catalog)
 
         try:
@@ -459,14 +476,31 @@ class Parser:
                         items = soup.find_all('div', class_='phytpj4_plp largeCard')
                         for item in items:
                             if item:
+                                try:
+                                    i_price = item.find_next(
+                                        'p', class_='t3y6ha_plp xc1n09g_plp p1q9hgmc_plp').get_text()
+                                    is_price = ''
+                                    for sym in i_price:
+                                        if sym == ',':
+                                            break
+                                        if sym.isdigit():
+                                            is_price += sym
+
+                                    i_price = int(is_price)
+                                    if i_price < minimum_price:
+                                        continue
+                                except Exception:
+                                    i_price = 'не указана'
+
                                 link = item.find_next('a').get('href')
                                 article = link[-9:-1]
                                 nums = Utils.get_stock(product_id=article) if article.isdigit() else 0
 
                                 if nums >= stc:
                                     pages[key][item.find_next('a').get('aria-label')] = ConfigData.HOST + link, nums
-                                logger.debug(f'артикул: {article}, остаток: {nums}, ссылка: {ConfigData.HOST + link}') \
-                                    if nums == 0 else logger.debug(f'артикул: {article}, остаток: {nums}')
+                                logger.debug(f'артикул: {article}, остаток: {nums}, цена: {i_price}, ссылка: '
+                                             f'{ConfigData.HOST + link}') if nums == 0 else logger.debug(
+                                    f'артикул: {article}, остаток: {nums}, цена: {i_price}')
 
                         next_page = Utils.get_next_page(page_soup=soup)
                         if not next_page is None:
