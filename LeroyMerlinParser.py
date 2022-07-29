@@ -1,4 +1,4 @@
-# Основной модуль
+"""Основной модуль программы"""
 import csv
 import json
 import os
@@ -9,17 +9,17 @@ from time import time as it
 from typing import List, Dict, Tuple
 
 import requests
+import undetected_chromedriver as uc
 from art import tprint
 from bs4 import BeautifulSoup
 from colorama import init, Fore
 from loguru import logger
 from playsound import playsound
-
-init()
-if not os.path.isdir('items'): os.mkdir('items')
-LOG_FMT = '{time:DD-MM-YYYY at HH:mm:ss} | {level: <8} | func: {function: ^15} | line: {line: >3} | message: {message}'
-logger.add(sink='logs/debug.log', format=LOG_FMT, level='INFO', diagnose=True, backtrace=False,
-           rotation="100 MB", retention=2, compression="zip")
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.wait import WebDriverWait
 
 
 class ConfigData:
@@ -40,6 +40,7 @@ class ConfigData:
     URL_api = 'https://api.leroymerlin.ru/aem_api/v1/getProductAvailabilityInfo'
 
     REGION_id = '34'  # 34 - Москва и область
+
     not_categories = []
 
 
@@ -49,6 +50,97 @@ class ExcStopParsing(Exception):
 
 class BadStatusCode(Exception):
     pass
+
+
+class ORMfiles:
+    catalog_file = ConfigData.catalog_file
+    headers_file = ConfigData.headers_file
+
+    @classmethod
+    def get_catalog_file(cls) -> Dict:
+        with open(cls.catalog_file, 'r') as file:
+            catalog = json.load(file)
+        return catalog
+
+    @classmethod
+    def update_catalog_file(cls, catalog: Dict) -> None:
+        with open(cls.catalog_file, 'w') as file:
+            json.dump(catalog, file)
+        logger.info(f'Каталог успешно обновлён, основных разделов: {len(catalog)} ')
+
+    @classmethod
+    def get_headers_file(cls) -> Dict:
+        with open(cls.headers_file, 'r') as file:
+            headers = json.load(file)
+        return headers
+
+    @classmethod
+    def update_headers_file(cls, headers: Dict) -> None:
+        with open(cls.headers_file, 'w') as file:
+            json.dump(headers, file)
+        logger.debug(f'Ключи обновлены')
+
+
+class UpdateCoockiesKeys:
+    """
+    Не детектируемый хромдрайвер
+    Установить библиотеки: pip install undetected-chromedriver selenium
+    Выполнить следующие импорты выше класса:
+    from selenium.webdriver.chrome.options import Options
+    import undetected_chromedriver as uc
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.wait import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    """
+
+    url = 'https://leroymerlin.ru/'
+    options = Options()
+    options.add_argument('--user-data-dir=items/profile')
+    options.add_argument('--no-first-run --no-service-autorun --password-store=basic')
+    options.add_argument("--window-size=1400,500")
+
+    @classmethod
+    def update_cookies(cls):
+        driver = uc.Chrome(options=cls.options)
+        waiter = WebDriverWait(driver=driver, timeout=10)
+
+        num_request = 0
+        while True:
+
+            num_request += 1
+            logger.debug(f'Запроса ключей  # {num_request}')
+
+            try:
+                driver.set_page_load_timeout(15)
+                driver.get(cls.url)
+                waiter.until(EC.visibility_of_element_located(
+                    (By.CSS_SELECTOR, 'body > uc-app > uc-main-page-search-gutter-2 > uc-catalog-button-v2')))
+
+                is_cookies = driver.get_cookies()
+                driver.quit()
+
+                if len(is_cookies) > 1:
+                    cookies_line = ''
+                    for i_file in is_cookies:
+                        name = i_file['name']
+                        value = i_file['value']
+                        cookies_line += f' {name}={value};'
+
+                    logger.debug(f'Ок -> ключи получены')
+                else:
+                    logger.warning(f'Ошибка запроса # {num_request} - не полный комплект ключей, ещё попытка')
+                    continue
+
+                return cookies_line.strip()
+
+            except TimeoutException:
+                driver.quit()
+                if num_request < 5:
+                    logger.warning(f'Ошибка запроса # {num_request} - timeout, ещё попытка')
+                    continue
+                else:
+                    logger.warning(f'Ключи недоступны, попробуйте ввести вручную')
+                    return None
 
 
 class GetAccess:
@@ -131,25 +223,30 @@ class SaveData:
                 logger.debug(f'Файл {ConfigData.csv_file} создан')
 
     @staticmethod
-    def save_data(data: Dict, path: str) -> None:
+    def save_data(data: Dict, path: str) -> bool:
         MiscUtils.get_signal()
         while True:
             time.sleep(0.5)
             next_stage = input(f'\n{Fore.YELLOW}Добавить данные в файл?{Fore.RESET} - y / n ').lower()
-            if next_stage == 'y':
+            if next_stage in ('y', 'н'):
                 break
-            elif next_stage == 'n':
-                return
+            elif next_stage in ('n', 'т'):
+                return False
             time.sleep(0.5)
             print(f'{Fore.RED}Ошибка ввода, нужно ввести - y или - n', Fore.RESET)
 
-        with open(path, 'a', newline='', encoding=ConfigData.encoding_resBase) as file:
-            writer = csv.writer(file, delimiter=';')
-            for key, values in data.items():
-                writer.writerow([key])
-                for i_key, value in values.items():
-                    writer.writerow([i_key, value[0], value[1]])
-        logger.info(f'Данные успешно сохранены в файл: {ConfigData.csv_file}')
+        try:
+            with open(path, 'a', newline='', encoding=ConfigData.encoding_resBase) as file:
+                writer = csv.writer(file, delimiter=';')
+                for key, values in data.items():
+                    writer.writerow([key])
+                    for i_key, value in values.items():
+                        writer.writerow([i_key, value[0], value[1]])
+            logger.info(f'Данные успешно сохранены в файл: {ConfigData.csv_file}')
+            return True
+        except Exception as exc:
+            logger.warning(f'Не удалось сохранить данные, ошибка:{exc}')
+            return False
 
 
 class MiscUtils:
@@ -160,8 +257,10 @@ class MiscUtils:
         try:
             if os.path.isfile(cls.__base_signal):
                 playsound(cls.__base_signal, block=False)
-        except Exception:
-            pass
+        except Exception as exc:
+            # todo разобраться и удалить принт
+            print('signal', exc)
+            # pass
 
     @classmethod
     def end_work(cls, result: str) -> None:
@@ -182,16 +281,16 @@ class MiscUtils:
         time.sleep(1)
 
     @classmethod
-    def choice_next_stage(cls, key: str) -> str:
+    def choice_next_stage(cls, key: str, result_saving: bool) -> str:
         while True:
             time.sleep(0.5)
             next_stage = input(f'\n{Fore.YELLOW}Продолжить парсинг{Fore.RESET} - y / n ').lower()
-            if next_stage == 'y':
-                if not key in ConfigData.not_categories:
+            if next_stage in ('y', 'н'):
+                if not key in ConfigData.not_categories and result_saving:
                     ConfigData.not_categories.append(key)
                 stage = 'next'
                 break
-            elif next_stage == 'n':
+            elif next_stage in ('n', 'т'):
                 stage = 'stop'
                 break
             time.sleep(0.5)
@@ -203,105 +302,15 @@ class MiscUtils:
         cls.get_signal()
         while True:
             time.sleep(0.5)
-            rst = input(f'\n{Fore.YELLOW}Перезапустить парсинг со страницы: {Fore.GREEN}{page}{Fore.RESET} - y / n ').lower()
-            if rst == 'y':
+            rst = input(
+                f'\n{Fore.YELLOW}Перезапустить парсинг со страницы: {Fore.GREEN}{page}{Fore.RESET} - y / n ').lower()
+
+            if rst in ('y', 'н'):
                 return end_url, page - 1
-            elif rst == 'n':
+            elif rst in ('n', 'т'):
                 return None, page
             time.sleep(0.5)
             print(f'{Fore.RED}Ошибка ввода, нужно ввести - y или - n', Fore.RESET)
-
-
-class Utils:
-
-    @staticmethod
-    def get_headers(url: str) -> None:
-        while True:
-            MiscUtils.get_signal()
-            time.sleep(0.5)
-            c_keys = input(f'{Fore.YELLOW}Введите ключи: {Fore.RESET}').strip()
-
-            hed = {"accept": ConfigData.ACCEPT, "cookie": c_keys, "user-agent": ConfigData.USER_AGENT}
-
-            html = requests.get(url, headers=hed)
-            headers_data = dict(html.request.headers) if html.status_code == 200 else {}
-            if headers_data.get("cookie"):
-                logger.debug(f'Ключи верные, статус ответа: OK')
-                with open(ConfigData.headers_file, 'w') as file:
-                    json.dump(headers_data, file)
-                    return
-            else:
-                logger.error(f'Ключи устарели или введены некорректные данные, статус ответа: {html.status_code}')
-
-    @staticmethod
-    def get_html(url: str, params: str | dict = '', num_request=[0], step=1) -> requests.models.Response | None:
-        try:
-            num_request[0] += 1
-            if not os.path.isfile(ConfigData.headers_file):
-                logger.warning('Файл с ключами не найден -> создаю схему зависимостей ...')
-                Utils.get_headers(ConfigData.URL_catalog)
-
-            with open(ConfigData.headers_file, 'r') as file:
-                headers = json.load(file)
-
-            logger.debug(f'Запрос #{num_request[0]}')
-            html = requests.get(url, headers=headers, params=params)
-
-        except Exception as exc:
-            logger.error(f'Ошибка при запросе к сайту: {exc}, return-> html = None')
-            html = None
-
-        else:
-            if html.status_code == 200:
-                logger.debug(f'Статус ответа: OK')
-
-                headers_data = dict(html.request.headers)
-                if headers_data.get("cookie"):
-                    with open(ConfigData.headers_file, 'w') as file:
-                        json.dump(headers_data, file)
-                    logger.info(f'Ключи обновлены')
-
-            else:
-                logger.warning(f'Доступ к сайту заблокирован -> необходимо обновить ключи')
-                Utils.get_headers(ConfigData.URL_catalog)
-                if step == 1:
-                    logger.warning(f'Повторяю запрос')
-                    html = Utils.get_html(url=url, params=params, step=2)
-                    logger.info(f'Успешно, статус: OK') if html.status_code == 200 \
-                        else logger.error(f'Доступ к сайту заблокирован')
-                else:
-                    logger.error(
-                        f'Ошибка повторного запроса, статус ответа: {html.status_code} -> return -> html = None')
-                    html = None
-
-        finally:
-            return html
-
-    @staticmethod
-    def get_catalogue(html: str) -> Dict:
-        catalog = {}
-        soup = BeautifulSoup(html, 'html.parser')
-        head_items = soup.find_all('div', class_='section-card')
-
-        for index, item in enumerate(head_items):
-            i_title = item.find_next('div', class_='title').find('a').get_text(strip=True) + f'={index + 1}'
-            i_link = ConfigData.HOST + item.find_next('div', class_='title').find('a').get('href')
-            catalog[i_title + ';' + i_link] = []
-            sub_items = item.find_all('li')
-
-            for i_index, value in enumerate(sub_items):
-                if i_index == len(sub_items) - 1:
-                    continue
-                value_title = value.find_next('span', class_='section-card-text').get_text(
-                    strip=True) + f'={i_index + 1}'
-                value_link = ConfigData.HOST + value.find_next('a').get('href')
-                catalog[i_title + ';' + i_link].append(value_title + ';' + value_link)
-
-        with open(ConfigData.catalog_file, 'w') as file_cat:
-            json.dump(catalog, file_cat)
-
-        logger.info(f'Каталог успешно обновлён, основных разделов: {len(catalog)} ')
-        return catalog
 
     @staticmethod
     def get_min_stock() -> int:
@@ -326,6 +335,101 @@ class Utils:
             min_price = int(min_price) if min_price.isdigit() else 'restart'
 
         return min_price
+
+
+class Utils:
+
+    @staticmethod
+    def get_headers(url: str) -> None:
+        c_keys = UpdateCoockiesKeys.update_cookies()
+        time.sleep(0.5)
+
+        while True:
+            MiscUtils.get_signal()
+            time.sleep(0.5)
+
+            if not c_keys:
+                c_keys = input(f'{Fore.YELLOW}Введите ключи: {Fore.RESET}').strip()
+
+            hed = {"accept": ConfigData.ACCEPT, "cookie": c_keys, "user-agent": ConfigData.USER_AGENT}
+
+            html = requests.get(url, headers=hed)
+            headers_data = dict(html.request.headers) if html.status_code == 200 else {}
+
+            if headers_data.get("cookie"):
+                logger.debug(f'Ключи верные, статус ответа: OK')
+                ORMfiles.update_headers_file(headers=headers_data)
+                return
+
+            else:
+                c_keys = None
+                logger.error(f'Ключи устарели или введены некорректные данные, статус ответа: {html.status_code}')
+
+    @staticmethod
+    def get_html(url: str, params: str | dict = '', num_request=[0], step=1) -> requests.models.Response | None:
+        try:
+            num_request[0] += 1
+            if not os.path.isfile(ConfigData.headers_file):
+                logger.warning('Файл с ключами не найден -> создаю схему зависимостей ...')
+                Utils.get_headers(ConfigData.URL_catalog)
+
+            headers = ORMfiles.get_headers_file()
+
+            logger.debug(f'Запрос #{num_request[0]}')
+            html = requests.get(url, headers=headers, params=params)
+
+        except Exception as exc:
+            logger.error(f'Ошибка при запросе к сайту: {exc}, return-> html = None')
+            html = None
+
+        else:
+            if html.status_code == 200:
+                logger.debug(f'Статус ответа: OK')
+
+                # В этом коде нет смысла потом удалить
+                headers_data = dict(html.request.headers)
+                if headers_data.get("cookie"):
+                    ORMfiles.update_headers_file(headers=headers_data)
+
+            else:
+                logger.warning(f'Доступ к сайту заблокирован -> необходимо обновить ключи')
+                Utils.get_headers(ConfigData.URL_catalog)
+
+                if step == 1:
+                    logger.warning(f'Повторяю запрос')
+                    html = Utils.get_html(url=url, params=params, step=2)
+                    logger.info(f'Успешно, статус: OK') if html.status_code == 200 \
+                        else logger.error(f'Доступ к сайту заблокирован')
+                else:
+                    logger.error(
+                        f'Ошибка повторного запроса, статус ответа: {html.status_code} -> return -> html = None')
+                    html = None
+
+        finally:
+            return html
+
+    @staticmethod
+    def get_catalogue(html: str) -> Dict:
+        catalog = {}
+        soup = BeautifulSoup(html, 'html.parser')
+        head_items = soup.find_all('div', class_='section-card')
+
+        for index, item in enumerate(head_items):
+            i_title = item.find_next('div', class_='title').find('a').get_text(strip=True) + f'={index + 1}'
+            i_link = ConfigData.HOST + item.find_next('div', class_='title').find('a').get('href')
+            catalog[i_title + ';' + i_link] = {}
+            sub_items = item.find_all('li')
+
+            for i_index, value in enumerate(sub_items):
+                if i_index == len(sub_items) - 1:
+                    continue
+                value_title = value.find_next(
+                    'span', class_='section-card-text').get_text(strip=True) + f'={i_index + 1}'
+                value_link = ConfigData.HOST + value.find_next('a').get('href')
+                catalog[i_title + ';' + i_link][value_title + ';' + value_link] = []
+
+        ORMfiles.update_catalog_file(catalog=catalog)
+        return catalog
 
     @staticmethod
     def get_stock(product_id: str, step=1, num=[0]) -> int | float:
@@ -366,9 +470,11 @@ class Utils:
                 return 0
 
     @staticmethod
-    def choice_category(catalog: Dict[str, List[str]] | List[str], not_categories: List, step='first') -> Dict:
+    def choice_category(catalog: Dict[str, Dict[str, List[str]]] | Dict[str, List[str | None]] | List[str],
+                        step='first', parent: str | None = None, list_data: Dict.keys | List | None = None) -> Dict:
+
         new_catalog = {}
-        i_iter = catalog.keys() if step == 'first' else catalog
+        i_iter = catalog.keys() if isinstance(catalog, dict) else catalog
 
         names = []
         for i_key in i_iter:
@@ -381,7 +487,7 @@ class Utils:
             category, link = i_key.split(';')
             name, key = category.split('=')
             sep = '    ' if int(key) % 3 != 0 else '\n'
-            if name in not_categories:
+            if name in ConfigData.not_categories:
                 line += f'{Fore.MAGENTA}{name:{height}} - {key:2s}{Fore.RESET}' + sep
             else:
                 line += f'{Fore.YELLOW}{name:{height}}{Fore.RESET} - {key:2s}' + sep
@@ -390,9 +496,20 @@ class Utils:
 
         while True:
             time.sleep(1)
-            choice = input(f'{line}\n\nВведите номер раздела для парсинга: ')
+            choice = input(f'{line}\n\nВведите номер раздела или "q" чтобы вернуться: ') if step != 'first' \
+                else input(f'{line}\n\nВведите номер раздела: ')
 
-            if choice == '0':
+            if choice in ('q', 'й') and step != 'first':
+                if step == 'second':
+                    i_catalog = ORMfiles.get_catalog_file()
+                    result = Utils.choice_category(catalog=i_catalog)
+                else:
+                    result = Utils.choice_category(
+                        catalog=list_data, step='second', parent=parent)
+
+                return result
+
+            elif choice == '0':
                 print(f'\n{Fore.WHITE}Выбраны все разделы{Fore.RESET}')
                 time.sleep(1)
                 return new_catalog
@@ -405,12 +522,58 @@ class Utils:
                         print(f'\nВыбран раздел:', f'{Fore.WHITE}{name_category}{Fore.RESET}')
                         time.sleep(1)
 
-                        result = Utils.choice_category(catalog[cat], step='second', not_categories=not_categories) \
-                            if step == 'first' else {name_category: link_category}
+                        if step == 'first':
+                            result = Utils.choice_category(catalog[cat], step='second', parent=cat)
+
+                        elif step == 'second':
+                            is_catalog = ORMfiles.get_catalog_file()
+                            list_categories = is_catalog.get(parent).get(cat)
+
+                            if not list_categories:
+                                list_categories = Utils.get_sub_sub_category(home_category=cat, parent=parent)
+
+                            if all(i_cat.split(';')[0].split('=')[0] in ConfigData.not_categories
+                                   for i_cat in list_categories):
+                                ConfigData.not_categories.append(name_category)
+
+                            result = Utils.choice_category(
+                                list_categories, step='third', parent=parent, list_data=i_iter)
+
+                        else:
+                            result = {name_category: link_category}
 
                         return result
+
             else:
                 print(f'{Fore.RED}Ошибка ввода, попробуйте ещё раз', Fore.RESET)
+
+    @staticmethod
+    def get_sub_sub_category(home_category: str, parent: str) -> List:
+        name_home_category, link_home_category = home_category.split(';')
+        name_home_category = name_home_category.split('=')[0]
+        logger.debug(f'Обновляю данные подкатегорий раздела: "{name_home_category}"')
+
+        result = []
+        sub_cat = Utils.get_html(link_home_category)
+        soup = BeautifulSoup(sub_cat.text, 'html.parser')
+        sub_categories = soup.find_all('a', class_='bex6mjh_plp b1f5t594_plp cm1dx3f_plp e1v1r819_plp')
+
+        for index, sub_category in enumerate(sub_categories):
+            sub_cat_link = ConfigData.HOST + sub_category.get('href')
+            sub_cat_name = sub_category.text
+            new_section = f'{sub_cat_name}={index + 1};{sub_cat_link}'
+            result.append(new_section) if not re.search(fr'{sub_cat_name}=\d+;{sub_cat_link}', str(result)) else None
+
+        if result:
+            is_catalog = ORMfiles.get_catalog_file()
+            is_catalog[parent][home_category] = result
+            ORMfiles.update_catalog_file(is_catalog)
+            logger.info(f'В разделе "{name_home_category}": {len(result)} подкатегорий')
+            return result
+
+        else:
+            logger.warning(f'В разделе "{name_home_category}" подкатегорий не найдено')
+            return []
 
     @staticmethod
     def get_next_page(page_soup: BeautifulSoup) -> Tuple[str] | None:
@@ -437,16 +600,15 @@ class Parser:
         time.sleep(0.5)
         SaveData.start_file_save(ConfigData.csv_file)
         time.sleep(0.5)
-        stc = Utils.get_min_stock()
-
-        minimum_price = Utils.get_min_price()
-
+        stc = MiscUtils.get_min_stock()
+        minimum_price = MiscUtils.get_min_price()
         html = Utils.get_html(ConfigData.URL_catalog)
+        Utils.get_catalogue(html.text)
 
         try:
             while stage != 'stop':
-                catalog = Utils.choice_category(Utils.get_catalogue(html.text),
-                                                not_categories=ConfigData.not_categories)
+                is_catalog = ORMfiles.get_catalog_file()
+                catalog: Dict = Utils.choice_category(is_catalog)
 
                 for defkey, url_link in catalog.items():
                     key = defkey.split("=")[0]
@@ -511,10 +673,10 @@ class Parser:
 
                     logger.info(f'Проверено страниц: {fact_page}, кол-во товаров: {len(pages[key])}')
 
-                    SaveData.save_data(pages, ConfigData.csv_file)
+                    result_saving = SaveData.save_data(pages, ConfigData.csv_file)
                     pages.clear()
 
-                    stage = MiscUtils.choice_next_stage(key)
+                    stage = MiscUtils.choice_next_stage(key, result_saving)
             MiscUtils.end_work(result='Ok')
 
         except Exception as exc:
@@ -528,5 +690,17 @@ class Parser:
 
 
 if __name__ == '__main__':
+    init()
+
+    if not os.path.isdir('items'):
+        os.mkdir('items')
+
+    LOG_FMT = \
+        '{time:DD-MM-YYYY at HH:mm:ss} | {level: <8} | func: {function: ^15} | line: {line: >3} | message: {message}'
+
+    logger.add(sink='logs/debug.log', format=LOG_FMT, level='INFO', diagnose=True, backtrace=False,
+               rotation="100 MB", retention=2, compression="zip")
+
     os.system("mode con cols=200 lines=40")
+
     Parser.parser()
