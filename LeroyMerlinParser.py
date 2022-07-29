@@ -28,6 +28,7 @@ class ConfigData:
     csv_file = os.path.abspath('LeroyBase.csv')
     headers_file = os.path.abspath('items/headers.json')
     catalog_file = os.path.abspath('items/catalog.json')
+    chrome_profile_category = os.path.abspath("items/profile")
 
     dev = 'https://github.com/MalakhovStas'
     X_API_KEY = 'VY0AKH3eBwhyGUjBM5U9rO4PyBvTG0cA'
@@ -95,9 +96,9 @@ class UpdateCoockiesKeys:
 
     url = 'https://leroymerlin.ru/'
     options = Options()
-    options.add_argument('--user-data-dir=items/profile')
+    options.add_argument(f'--user-data-dir={ConfigData.chrome_profile_category}')
     options.add_argument('--no-first-run --no-service-autorun --password-store=basic')
-    options.add_argument("--window-size=1400,500")
+    options.add_argument("--window-size=1200,500")
 
     @classmethod
     def update_cookies(cls):
@@ -111,7 +112,7 @@ class UpdateCoockiesKeys:
             logger.debug(f'Запроса ключей  # {num_request}')
 
             try:
-                driver.set_page_load_timeout(15)
+                driver.set_page_load_timeout(30)
                 driver.get(cls.url)
                 waiter.until(EC.visibility_of_element_located(
                     (By.CSS_SELECTOR, 'body > uc-app > uc-main-page-search-gutter-2 > uc-catalog-button-v2')))
@@ -133,10 +134,10 @@ class UpdateCoockiesKeys:
 
                 return cookies_line.strip()
 
-            except TimeoutException:
+            except (TimeoutException, ConnectionError) as exc:
                 driver.quit()
                 if num_request < 5:
-                    logger.warning(f'Ошибка запроса # {num_request} - timeout, ещё попытка')
+                    logger.warning(f'Ошибка запроса # {num_request} - {exc.__class__}, ещё попытка')
                     continue
                 else:
                     logger.warning(f'Ключи недоступны, попробуйте ввести вручную')
@@ -257,10 +258,10 @@ class MiscUtils:
         try:
             if os.path.isfile(cls.__base_signal):
                 playsound(cls.__base_signal, block=False)
-        except Exception as exc:
-            # todo разобраться и удалить принт
-            print('signal', exc)
-            # pass
+        except Exception:
+            # На Windows работает на Ubuntu нет наверное дело в версии playsound сейчас установлена для работы с windows
+            # print('signal', exc)
+            pass
 
     @classmethod
     def end_work(cls, result: str) -> None:
@@ -341,14 +342,15 @@ class Utils:
 
     @staticmethod
     def get_headers(url: str) -> None:
+        #todo разобраться почему не работает в windows после компиляции pyinstaller
         c_keys = UpdateCoockiesKeys.update_cookies()
         time.sleep(0.5)
 
         while True:
-            MiscUtils.get_signal()
-            time.sleep(0.5)
 
             if not c_keys:
+                MiscUtils.get_signal()
+                time.sleep(0.5)
                 c_keys = input(f'{Fore.YELLOW}Введите ключи: {Fore.RESET}').strip()
 
             hed = {"accept": ConfigData.ACCEPT, "cookie": c_keys, "user-agent": ConfigData.USER_AGENT}
@@ -386,7 +388,7 @@ class Utils:
             if html.status_code == 200:
                 logger.debug(f'Статус ответа: OK')
 
-                # В этом коде нет смысла потом удалить
+                # todo В этом коде нет смысла потом удалить
                 headers_data = dict(html.request.headers)
                 if headers_data.get("cookie"):
                     ORMfiles.update_headers_file(headers=headers_data)

@@ -44,7 +44,7 @@ class SetAccess:
 
 if __name__ == '__main__':
     now_time = int(it())
-    SetAccess.gen(now_time + (SetAccess.month * 1))
+    SetAccess.gen(now_time + (SetAccess.week * 3))
 
 # pyinstaller --onefile -i "rbt.ico" --add-data "a_file.txt;." --add-data "headers.json;." --add-data "catalog.json;." LeroyMerlinParser.py
 #  pyinstaller --onefile -i "rbt.ico" LeroyMerlinParser.py
