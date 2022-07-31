@@ -39,6 +39,7 @@ class ConfigData:
     HOST = 'https://leroymerlin.ru'
     URL_catalog = 'https://leroymerlin.ru/catalogue/'
     URL_api = 'https://api.leroymerlin.ru/aem_api/v1/getProductAvailabilityInfo'
+    flag_store_pickup = '?deliveryType=Самовывоз+в+магазине'
 
     REGION_id = '34'  # 34 - Москва и область
 
@@ -225,7 +226,7 @@ class SaveData:
 
     @staticmethod
     def save_data(data: Dict, path: str) -> bool:
-        MiscUtils.get_signal()
+        # MiscUtils.get_signal()
         while True:
             time.sleep(0.5)
             next_stage = input(f'\n{Fore.YELLOW}Добавить данные в файл?{Fore.RESET} - y / n ').lower()
@@ -259,6 +260,7 @@ class MiscUtils:
             if os.path.isfile(cls.__base_signal):
                 playsound(cls.__base_signal, block=False)
         except Exception:
+            # TODO нужно разобраться
             # На Windows работает на Ubuntu нет наверное дело в версии playsound сейчас установлена для работы с windows
             # print('signal', exc)
             pass
@@ -337,21 +339,34 @@ class MiscUtils:
 
         return min_price
 
+    @classmethod
+    def get_flag_store_pickup(cls) -> Dict | None:
+        while True:
+            time.sleep(0.5)
+            answer = input(
+                f'\n{Fore.YELLOW}Установить флаг "Самовывоз в магазине" по умолчанию  y / n : ').lower()
+            if answer in ('y', 'н'):
+                return ConfigData.flag_store_pickup
+            elif answer in ('n', 'т'):
+                return None
+            time.sleep(0.5)
+            print(f'{Fore.RED}Ошибка ввода, нужно ввести - y или - n', Fore.RESET)
+
 
 class Utils:
 
     @staticmethod
     def get_headers(url: str) -> None:
-        #todo разобраться почему не работает в windows после компиляции pyinstaller
-        c_keys = UpdateCoockiesKeys.update_cookies()
-        time.sleep(0.5)
+        #TODO разобраться почему не работает в windows после компиляции pyinstaller
+        # c_keys = UpdateCoockiesKeys.update_cookies()
+        # time.sleep(0.5)
 
         while True:
 
-            if not c_keys:
-                MiscUtils.get_signal()
-                time.sleep(0.5)
-                c_keys = input(f'{Fore.YELLOW}Введите ключи: {Fore.RESET}').strip()
+            # if not c_keys:
+            MiscUtils.get_signal()
+            time.sleep(0.5)
+            c_keys = input(f'{Fore.YELLOW}Введите ключи: {Fore.RESET}').strip()
 
             hed = {"accept": ConfigData.ACCEPT, "cookie": c_keys, "user-agent": ConfigData.USER_AGENT}
 
@@ -364,7 +379,7 @@ class Utils:
                 return
 
             else:
-                c_keys = None
+                # c_keys = None
                 logger.error(f'Ключи устарели или введены некорректные данные, статус ответа: {html.status_code}')
 
     @staticmethod
@@ -604,6 +619,7 @@ class Parser:
         time.sleep(0.5)
         stc = MiscUtils.get_min_stock()
         minimum_price = MiscUtils.get_min_price()
+        flag_pickup = MiscUtils.get_flag_store_pickup()
         html = Utils.get_html(ConfigData.URL_catalog)
         Utils.get_catalogue(html.text)
 
@@ -620,17 +636,20 @@ class Parser:
 
                     while url_link:
                         num_page += 1
-                        new_html = Utils.get_html(url_link, params={'page': num_page})
+
+                        new_html = Utils.get_html(url_link + flag_pickup + f'&page={num_page}') \
+                            if flag_pickup else Utils.get_html(url_link, params={'page': num_page})
 
                         if new_html is None:
                             raise ExcStopParsing
 
-                        fact_page = int(new_html.url.split('=')[1]) if new_html.url.split('=')[1].isdigit() else 0
+                        fact_page = int(new_html.url.rsplit('=', 1)[1]) \
+                            if new_html.url.rsplit('=', 1)[1].isdigit() else 0
 
                         # Дополнительная проверка
                         if fact_page < num_page:
                             url_link = None
-                            logger.warning(f'Парсинг раздела: {key} успешно завершён Тута')
+                            logger.warning(f'Парсинг раздела: {key} успешно завершён!!!!!!!')
                             continue
                         # По идее срабатывать не должна
 
@@ -662,9 +681,9 @@ class Parser:
 
                                 if nums >= stc:
                                     pages[key][item.find_next('a').get('aria-label')] = ConfigData.HOST + link, nums
-                                logger.debug(f'артикул: {article}, остаток: {nums}, цена: {i_price}, ссылка: '
+                                logger.debug(f'страница: {fact_page}, артикул: {article}, остаток: {nums}, цена: {i_price}, ссылка: '
                                              f'{ConfigData.HOST + link}') if nums == 0 else logger.debug(
-                                    f'артикул: {article}, остаток: {nums}, цена: {i_price}')
+                                    f'страница: {fact_page}, артикул: {article}, остаток: {nums}, цена: {i_price}')
 
                         next_page = Utils.get_next_page(page_soup=soup)
                         if not next_page is None:
@@ -682,6 +701,7 @@ class Parser:
             MiscUtils.end_work(result='Ok')
 
         except Exception as exc:
+            print(exc)
             logger.error(f'Критическая ошибка: {exc}')
             logger.warning(f'Парсинг раздела {key} завершён не полностью, '
                            f'проверено страниц: {fact_page} '
